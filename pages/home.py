@@ -316,6 +316,25 @@ def main():
     if "authenticated" not in st.session_state or not st.session_state.authenticated:
         st.switch_page("app.py")  # volver al login
 
+    # Custom HTML/CSS for the banner
+    ## Add background image
+    st.markdown(
+        """
+        <style>
+        header[data-testid="stHeader"]{
+            background-image: url(https://i.ibb.co/N6z3GQ1K/header.png);
+            background-repeat: repeat;
+            background-size: contain;
+            height: 10%;
+        }
+        
+        section[data-testid="stSidebar"] {
+            top: 0%; 
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
     # Logo en la parte superior del sidebar
     st.sidebar.image("img/logo.png", use_container_width=True)
 
@@ -323,8 +342,15 @@ def main():
     hide_default_nav = """
     <style>
         /* Oculta la lista de páginas que Streamlit crea automáticamente */
-        [data-testid="stSidebarNav"] ul {
+        [data-testid="stSidebarNav"] {
             display: none;
+        }
+        [data-testid="stSidebarHeader"] {
+            padding: 0 !important;
+            margin: 0 !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
         }
     </style>
     """

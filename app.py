@@ -7,7 +7,8 @@ import sys
 # Configurar página
 st.set_page_config(
     page_title="VALD Data Extraction App",
-    page_icon="📊"
+    page_icon="📊",
+    layout="centered"
 )
 
 def show_home():
