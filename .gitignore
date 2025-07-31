@@ -172,3 +172,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Credentials
+*.json
+.env
+
+utils/Extracion.ipynb
+utils/extractor_v2.ipynb
+.env.example

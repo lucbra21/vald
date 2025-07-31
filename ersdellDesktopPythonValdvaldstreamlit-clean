@@ -1,0 +1,44 @@
+[33mcommit b382519d913f5aa90af59b187a993ae17f253a7a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m
+Author: Tu Nombre <tu.email@ejemplo.com>
+Date:   Wed Jun 11 18:52:02 2025 -0300
+
+    Añadir app.py y otros archivos necesarios
+
+.gitignore
+
+[33mcommit 41d4cf5b97dba14cdaec415a4a3c406634a92ca1[m
+Author: Tu Nombre <tu.email@ejemplo.com>
+Date:   Wed Jun 11 18:27:47 2025 -0300
+
+    Refactorización para usar variables de entorno y mejorar la seguridad
+
+.gitignore
+credentials.json
+requirements.txt
+utils/extractor.py
+
+[33mcommit ec9d5528cc24db32a26303ccffb81f3512fcc03a[m
+Author: fideito10 <calvoj550@gmail.com>
+Date:   Wed Jun 11 18:15:40 2025 -0300
+
+    Actualización completa del proyecto VALD con integración a Google Sheets
+
+.gitignore
+README.md
+app.py
+credentials.json
+output_data/all_forceframe.csv
+output_data/all_nordbord.csv
+output_data/all_profiles.csv
+output_data/categories_f1185650-fb79-44a0-8b4b-b2bf82d28c83.csv
+output_data/groups_f1185650-fb79-44a0-8b4b-b2bf82d28c83.csv
+output_data/groups_with_categories_f1185650-fb79-44a0-8b4b-b2bf82d28c83.csv
+output_data/tenants.csv
+requirements.txt
+utils/Extracion.ipynb
+utils/__init__.py
+utils/__pycache__/__init__.cpython-311.pyc
+utils/__pycache__/__init__.cpython-313.pyc
+utils/__pycache__/extractor.cpython-311.pyc
+utils/__pycache__/extractor.cpython-313.pyc
+utils/extractor.py
