@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import traceback
 from dotenv import load_dotenv
 
-from utils.extractor_v2 import df_all_forcedecks
+# from utils.extractor_v2 import df_all_forcedecks
 
 # Cargar variables de entorno desde el archivo .env
 load_dotenv()

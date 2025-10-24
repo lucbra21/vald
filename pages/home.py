@@ -298,6 +298,52 @@ def show_forceframe():
     except Exception as e:
         st.error(f"Error al leer el CSV: {e}")
 
+def show_forcedecks():
+    """Muestra los datos del archivo all_forcedecks.csv"""
+    csv_path = "utils/output_data/all_forcedecks.csv"
+    st.header("🏋️‍♂️ Datos ForceDecks")
+    if not os.path.exists(csv_path):
+        st.warning("El archivo all_forcedecks.csv no existe. Ejecuta la extracción primero.")
+        return
+    try:
+        df_tests = pd.read_csv(csv_path)
+        profiles_path = "utils/output_data/all_profiles.csv"
+        if os.path.exists(profiles_path):
+            df_profiles = pd.read_csv(profiles_path)[["profileId","givenName","familyName","dateOfBirth","groupName"]]
+            df_merged = df_tests.merge(df_profiles, on="profileId", how="left")
+            # Mantener solo tests con perfil asociado completo
+            df = df_merged.dropna(subset=["givenName","familyName","dateOfBirth"])
+            if df.empty:
+                st.warning("No se encontraron tests con perfil asociado.")
+                return
+            df = df.rename(columns={"givenName":"Nombre","familyName":"Apellido","dateOfBirth":"Fecha de nacimiento"})
+            df["Fecha de nacimiento"] = pd.to_datetime(df["Fecha de nacimiento"]).dt.date
+            today = pd.to_datetime("today").date()
+            df["Edad"] = df["Fecha de nacimiento"].apply(lambda d: today.year - d.year - ((today.month, today.day) < (d.month, d.day)))
+            # ¿Hay filas con las tres columnas de perfil completas?
+            has_complete_profile = df_merged[["givenName","familyName","dateOfBirth"]].notna().all(axis=1).any()
+            if has_complete_profile:
+                df = df_merged.dropna(subset=["givenName","familyName","dateOfBirth"])
+                df = df.rename(columns={"givenName":"Nombre","familyName":"Apellido","dateOfBirth":"Fecha de nacimiento"})
+                df["Fecha de nacimiento"] = pd.to_datetime(df["Fecha de nacimiento"]).dt.date
+                today = pd.to_datetime("today").date()
+                df["Edad"] = df["Fecha de nacimiento"].apply(lambda d: today.year - d.year - ((today.month, today.day) < (d.month, d.day)))
+            else:
+                st.info("No se encontraron coincidencias de perfiles; se muestran todos los tests.")
+                df = df_tests
+        else:
+            df = df_tests
+        with st.expander(f"🗒️ Tabla completa ({len(df)} filas)"):
+            st.dataframe(df, use_container_width=True)
+        st.download_button(
+            label="⬇️ Descargar ForceDecks CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="all_forcedecks.csv",
+            mime="text/csv",
+        )
+    except Exception as e:
+        st.error(f"Error al leer el CSV: {e}")
+
 
 def show_profiles():
     """Muestra lista de perfiles"""
@@ -442,6 +488,7 @@ def main():
         "Perfiles": show_profiles,
         "NordBord": show_nordbord,
         "Force Frame": show_forceframe,
+        "Force Decks": show_forcedecks,
         "Cerrar Sesión": logout,
     }
 
