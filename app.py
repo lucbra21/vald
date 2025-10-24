@@ -28,39 +28,39 @@ def show_download():
         # Crear contenedor para logs
         log_container = st.empty()
 
-        # Redirigir salida estándar a Streamlit
+        # Redirigir la salida estándar a Streamlit para mostrar logs en tiempo real
         import sys
-        from io import StringIO
+        import time
+
+        log_container = st.empty()
+        class StreamlitWriter:
+            """Escribe cada mensaje en un contenedor Streamlit en tiempo real."""
+            def __init__(self, container):
+                self.container = container
+                self.logs = ""
+            def write(self, message):
+                # Añadir el nuevo mensaje y actualizar la UI
+                self.logs += str(message)
+                # Utilizamos code() para formato monoespaciado
+                self.container.code(self.logs)
+                # Pequeña pausa para permitir al frontend renderizar
+                time.sleep(0.05)
+            def flush(self):
+                pass  # Necesario para compatibilidad con sys.stdout
 
         old_stdout = sys.stdout
-        redirected_output = StringIO()
-        sys.stdout = redirected_output
+        writer = StreamlitWriter(log_container)
+        sys.stdout = writer
 
-        # Mostrar spinner durante la extracción
-        with st.spinner("Ejecutando el proceso de extracción..."):
-            try:
-                # Ejecutar extracción
-                run_extraction()
-
-                # Restaurar salida estándar
-                sys.stdout = old_stdout
-
-                # Mostrar logs
-                log_container.code(redirected_output.getvalue())
-
-                # Mostrar mensaje de éxito
-                st.success("✅ Proceso de extracción completado con éxito")
-
-                # Mostrar datos extraídos si existen
-                show_extracted_data()
-
-            except Exception as e:
-                # Restaurar salida estándar
-                sys.stdout = old_stdout
-
-                # Mostrar error
-                log_container.code(redirected_output.getvalue())
-                st.error(f"❌ Error durante la extracción: {str(e)}")
+        status = st.status("Ejecutando el proceso de extracción…", expanded=True)
+        try:
+            run_extraction()
+            sys.stdout = old_stdout
+            status.update(label="Proceso completado ✅", state="complete")
+            show_extracted_data()
+        except Exception as e:
+            sys.stdout = old_stdout
+            status.update(label=f"Error: {e}", state="error")
 
 
 def login():

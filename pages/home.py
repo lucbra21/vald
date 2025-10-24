@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import altair as alt
-from utils.extractor import run_extraction
+import time
+from datetime import datetime
+from utils.extractor import run_extraction_with_realtime_logs
 
 # Configurar página
 st.set_page_config(
@@ -63,23 +65,23 @@ def show_download():
         Los datos se guardan en archivos CSV en la carpeta `output_data`.
         """)
     if st.button("🚀 Iniciar Proceso de Extracción", type="primary"):
-        log_container = st.empty()
-        import sys
-        from io import StringIO
-        old_stdout = sys.stdout
-        redirected_output = StringIO()
-        sys.stdout = redirected_output
-        with st.spinner("Ejecutando el proceso de extracción..."):
-            try:
-                run_extraction()
-                sys.stdout = old_stdout
-                log_container.code(redirected_output.getvalue())
-                st.success("✅ Proceso de extracción completado con éxito")
-                show_extracted_data()
-            except Exception as e:
-                sys.stdout = old_stdout
-                log_container.code(redirected_output.getvalue())
-                st.error(f"❌ Error durante la extracción: {str(e)}")
+        log_area = st.empty()
+        progress_bar = st.progress(0.0)
+
+        def log_cb(message: str):
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_area.write(f"{timestamp} | {message}")
+
+        def progress_cb(current: int, total: int, text: str):
+            progress_bar.progress(current / total, text)
+
+        try:
+            run_extraction_with_realtime_logs(log_cb, progress_cb)
+            progress_bar.progress(1.0, "Completado")
+            st.success("✅ Proceso de extracción completado con éxito")
+            show_extracted_data()
+        except Exception as e:
+            st.error(f"❌ Error durante la extracción: {e}")
 
 
 def show_nordbord():
@@ -93,12 +95,55 @@ def show_nordbord():
         df_tests = pd.read_csv(csv_path)
         profiles_path = "utils/output_data/all_profiles.csv"
         if os.path.exists(profiles_path):
-            df_profiles = pd.read_csv(profiles_path)[["profileId","givenName","familyName","dateOfBirth"]]
+            df_profiles = pd.read_csv(profiles_path)[["profileId","givenName","familyName","dateOfBirth","groupName"]]
             df = df_tests.merge(df_profiles, on="profileId", how="left")
             # Eliminar tests sin perfil asociado
             df = df.dropna(subset=["givenName","familyName","dateOfBirth"])
+            # Forzar columna Grupo a partir de groupName y limpiar
+            df["Grupo"] = df["groupName"]
             # Renombrar columnas
             df = df.rename(columns={"givenName": "Nombre", "familyName": "Apellido", "dateOfBirth": "Fecha de nacimiento", "testTypeName": "Test", "device": "Dispositivo", "leftAvgForce": "L Avg Force (N)", "rightAvgForce": "R Avg Force (N)", "leftMaxForce": "L Max Force (N)", "rightMaxForce": "R Max Force (N)", "leftTorque": "L Max Torque (Nm)", "rightTorque": "R Max Torque (Nm)", "leftRepetitions": "L Reps", "rightRepetitions": "R Reps", "leftImpulse": "L Max Impulse (Ns)", "rightImpulse": "R Max Impulse (Ns)","notes": "Notas"})
+
+            # ------------------ Filtros ------------------
+            # Fecha del test como columna fecha
+            df["Fecha Test"] = pd.to_datetime(df_tests["testDateUtc"], errors="coerce").dt.date
+            
+            # ---- Filtros (primera fila) ----
+            fecha_series = df["Fecha Test"].dropna()
+            min_date = fecha_series.min() if not fecha_series.empty else None
+            max_date = fecha_series.max() if not fecha_series.empty else None
+
+            grupos = sorted(df["Grupo"].dropna().unique()) if "Grupo" in df.columns else []
+            test_types = sorted(df["Test"].dropna().unique())
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                fecha_inicio, fecha_fin = st.date_input("Rango de fechas", (min_date, max_date), key="nb_fecha")
+            with col2:
+                sel_grupo = st.multiselect("Plantel", options=grupos, default=[], key="nb_grupo")
+            with col3:
+                sel_tests = st.multiselect("Tipo de test", options=test_types, default=[], key="nb_test")
+
+            # Aplicar filtros seleccionados
+            if fecha_inicio and fecha_fin:
+                df = df[df["Fecha Test"].notna() & (df["Fecha Test"] >= fecha_inicio) & (df["Fecha Test"] <= fecha_fin)]
+            if sel_grupo:
+                df = df[df["Grupo"].isin(sel_grupo)]
+            if sel_tests:
+                df = df[df["Test"].isin(sel_tests)]
+
+            # ---- Filtro Jugador (segunda fila) ----
+            df["Jugador"] = (df["Nombre"] + " " + df["Apellido"]).str.strip()
+            jugadores = sorted(df["Jugador"].unique())
+            sel_jug = st.multiselect("Jugador", options=jugadores, default=[])
+            if sel_jug:
+                df = df[df["Jugador"].isin(sel_jug)]
+
+            # Selector plantel (groupName)
+            grupos = sorted(df["Grupo"].dropna().unique()) if "Grupo" in df.columns else []
+            
+            if sel_grupo:
+                df = df[df["Grupo"].isin(sel_grupo)]
             # Formatear fecha y calcular edad
             df["Fecha de nacimiento"] = pd.to_datetime(df["Fecha de nacimiento"]).dt.date
             today = pd.to_datetime("today").date()
@@ -116,11 +161,11 @@ def show_nordbord():
             num_cols = df.select_dtypes(include='number').columns
             df[num_cols] = df[num_cols].round(2)
             # Eliminar columnas no deseadas
-            cols_to_drop = ["profileId", "testId", "modifiedDateUtc", "testDateUtc", "testTypeId", "tenant_id","leftCalibration", "rightCalibration"]
+            cols_to_drop = ["profileId", "testId", "modifiedDateUtc", "testDateUtc", "testTypeId", "tenant_id","leftCalibration", "rightCalibration", "categoryName", "groupName"]
             df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
             # Reordenar columnas según preferencia
             desired_order = [
-                "Nombre", "Apellido", "Fecha de nacimiento", "Edad", "Dispositivo", "Test", "L Reps", "R Reps",
+                "Fecha Test", "Nombre", "Apellido", "Grupo", "Fecha de nacimiento", "Edad", "Dispositivo", "Test", "L Reps", "R Reps",
                 "L Max Force (N)", "R Max Force (N)", "Max Imbalance (%)", "L Max Torque (Nm)", "R Max Torque (Nm)",
                 "L Avg Force (N)", "R Avg Force (N)", "Avg Imbalance (%)", "L Max Impulse (Ns)", "R Max Impulse (Ns)",
                 "Impulse Imbalance (%)", "Notas"
@@ -139,8 +184,8 @@ def show_nordbord():
         #     "Impulse Imbalance (%)","Notes"
         # ]
         # df = df[cols]
-        st.write(f"{len(df)} filas cargadas")
-        st.dataframe(df, use_container_width=True)
+        with st.expander(f"🗒️ Tabla completa ({len(df)} filas)"):
+            st.dataframe(df, use_container_width=True)
 
         # ---------------- Estadísticas por edad ----------------
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c not in ["Edad"]]
@@ -153,8 +198,10 @@ def show_nordbord():
                 .sort_values("Edad")
             )
             st.subheader("📊 Valores mínimo y máximo por edad")
-            st.dataframe(stats_df, use_container_width=True)
+            # Tabs para mostrar gráfico (por defecto) y tabla
+            tab_chart, tab_table = st.tabs(["📈 Gráfico", "📋 Tabla"])
 
+            # ---- Gráfico ----
             mean_df = df.groupby("Edad")[var_sel].mean().reset_index(name="Media")
             overall_mean = df[var_sel].mean()
             chart_mean = (
@@ -172,8 +219,14 @@ def show_nordbord():
                 .mark_rule(color="red", strokeDash=[4,4])
                 .encode(y="y:Q")
             )
-            st.altair_chart(chart_mean + rule, use_container_width=True)
+            with tab_chart:
+                st.altair_chart(chart_mean + rule, use_container_width=True)
 
+            # ---- Tabla ----
+            with tab_table:
+                st.dataframe(stats_df, use_container_width=True)
+
+        st.subheader("⚖️ Dispersión Fuerza Máxima Izquierda vs Derecha")
         # Gráfico comparativo de fuerzas máximas izquierda vs derecha
         tooltip_candidates = ["Nombre","Apellido","Date UTC","L Max Force (N)","R Max Force (N)"]
         tooltip_cols = [c for c in tooltip_candidates if c in df.columns]
@@ -210,7 +263,7 @@ def show_forceframe():
         df_tests = pd.read_csv(csv_path)
         profiles_path = "utils/output_data/all_profiles.csv"
         if os.path.exists(profiles_path):
-            df_profiles = pd.read_csv(profiles_path)[["profileId","givenName","familyName","dateOfBirth"]]
+            df_profiles = pd.read_csv(profiles_path)[["profileId","givenName","familyName","dateOfBirth","groupName"]]
             df_merged = df_tests.merge(df_profiles, on="profileId", how="left")
             # Mantener solo tests con perfil asociado completo
             df = df_merged.dropna(subset=["givenName","familyName","dateOfBirth"])
@@ -234,8 +287,8 @@ def show_forceframe():
                 df = df_tests
         else:
             df = df_tests
-        st.write(f"{len(df)} filas cargadas")
-        st.dataframe(df, use_container_width=True)
+        with st.expander(f"🗒️ Tabla completa ({len(df)} filas)"):
+            st.dataframe(df, use_container_width=True)
         st.download_button(
             label="⬇️ Descargar ForceFrame CSV",
             data=df.to_csv(index=False).encode("utf-8"),

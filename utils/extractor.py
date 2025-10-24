@@ -9,6 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import traceback
 from dotenv import load_dotenv
 
+from utils.extractor_v2 import df_all_forcedecks
+
 # Cargar variables de entorno desde el archivo .env
 load_dotenv()
 
@@ -17,9 +19,12 @@ CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 FECHA_DESDE = os.getenv('FECHA_DESDE')
 
-# Crear directorio para guardar los CSV si no existe
-OUTPUT_DIR = "output_data"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Directorio ABSOLUTO para guardar CSV (relativo a este archivo)
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output_data"
+OUTPUT_DIR.mkdir(exist_ok=True)
+print(f"📁 Directorio de salida: {OUTPUT_DIR}")
 
 # Configuración para Google Sheets
 #CREDENTIALS_FILE = os.getenv('CREDENTIALS_FILE', 'credentials.json')
@@ -138,7 +143,7 @@ def get_token():
 
 # Función para obtener tenants
 def get_tenants(token):
-    url = "https://prd-aue-api-externaltenants.valdperformance.com/tenants"
+    url = "https://prd-use-api-externaltenants.valdperformance.com/tenants"
     
     headers = {
         "Authorization": f"Bearer {token}",
@@ -168,7 +173,7 @@ def get_tenants(token):
 
 # Función para obtener categorías
 def get_categories(tenant_id, token):
-    url = "https://prd-aue-api-externaltenants.valdperformance.com/categories"
+    url = "https://prd-use-api-externaltenants.valdperformance.com/categories"
     
     headers = {
         "Authorization": f"Bearer {token}",
@@ -204,7 +209,7 @@ def get_categories(tenant_id, token):
 
 # Función para obtener grupos
 def get_groups(tenant_id, token):
-    url = "https://prd-aue-api-externaltenants.valdperformance.com/groups"
+    url = "https://prd-use-api-externaltenants.valdperformance.com/groups"
     
     headers = {
         "Authorization": f"Bearer {token}",
@@ -240,7 +245,7 @@ def get_groups(tenant_id, token):
 
 # Función para obtener perfiles
 def get_profiles(token, tenant_id, groupId, groupName, categoryId, categoryName, df_all_profiles=None):
-    url = "https://prd-aue-api-externalprofile.valdperformance.com/profiles"
+    url = "https://prd-use-api-externalprofile.valdperformance.com/profiles"
     
     headers = {
         "Authorization": f"Bearer {token}",
@@ -253,7 +258,7 @@ def get_profiles(token, tenant_id, groupId, groupName, categoryId, categoryName,
     }
     
     try:
-        print(f"🔄 Solicitando perfiles para grupo {groupName}...")
+        # print(f"🔄 Solicitando perfiles para grupo {groupName}...")
         response_profiles = requests.get(url, headers=headers, params=params)
         
         if response_profiles.status_code != 200:
@@ -261,23 +266,23 @@ def get_profiles(token, tenant_id, groupId, groupName, categoryId, categoryName,
             return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
         
         if not response_profiles.content or response_profiles.content == b'':
-            print(f"⚠️ Respuesta vacía para grupo {groupName}")
+            # print(f"⚠️ Respuesta vacía para grupo {groupName}")
             return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
         
         content_str = response_profiles.content.decode('utf-8')
         
         if not content_str.strip():
-            print(f"⚠️ Contenido vacío para grupo {groupName}")
+            # print(f"⚠️ Contenido vacío para grupo {groupName}")
             return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
             
         profiles = json.loads(content_str)
         
         if 'profiles' not in profiles:
-            print(f"⚠️ Estructura JSON inesperada para grupo {groupName}")
+            # print(f"⚠️ Estructura JSON inesperada para grupo {groupName}")
             return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
         
         if not profiles['profiles']:
-            print(f"ℹ️ No hay perfiles para el grupo {groupName}")
+            # print(f"ℹ️ No hay perfiles para el grupo {groupName}")
             return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
         
         df_profiles_ = pd.DataFrame(profiles['profiles'])
@@ -294,7 +299,7 @@ def get_profiles(token, tenant_id, groupId, groupName, categoryId, categoryName,
         else:
             df_all_profiles = df_profiles_
         
-        print(f"✅ {len(df_profiles_)} perfiles obtenidos para grupo {groupName}")
+        # print(f"✅ {len(df_profiles_)} perfiles obtenidos para grupo {groupName}")
         
         return df_all_profiles
         
@@ -305,137 +310,512 @@ def get_profiles(token, tenant_id, groupId, groupName, categoryId, categoryName,
         print(f"❌ Error inesperado para grupo {groupName}: {e}")
         return df_all_profiles if df_all_profiles is not None else pd.DataFrame()
 
-# Función para obtener datos de NordBord
-def get_nordbord(token, tenant_id, fecha_desde, df_all_nordbord=None):
-    base_url = "https://prd-aue-api-externalnordbord.valdperformance.com"
-    
+def get_nordbord_complete(token, tenant_id, fecha_desde, profile_id=None):
+    """
+    Obtiene TODOS los datos de NordBord usando la paginación correcta del endpoint /tests/v2
+    """
+    base_url = "https://prd-use-api-externalnordbord.valdperformance.com"
     endpoint = "/tests/v2"
-    params = {
-        "tenantId": tenant_id,
-        "modifiedFromUtc": fecha_desde
-    }
     
     headers = {
         "Authorization": f"Bearer {token}"
     }
     
-    try:
-        print(f"🔄 Solicitando datos NordBord para tenant {tenant_id}...")
-        response = requests.get(f"{base_url}{endpoint}", params=params, headers=headers)
+    all_tests = []  # Cambiado para ser más específico
+    current_modified_from = fecha_desde
+    page_count = 0
+    
+    print(f"🔄 Iniciando obtención completa de datos NordBord para tenant {tenant_id}...")
+    
+    while True:
+        page_count += 1
+        print(f"📄 Procesando página {page_count} (desde: {current_modified_from})")
         
-        if response.status_code == 200:
-            print(f"✅ Datos obtenidos correctamente")
-            datos = response.json()
+        params = {
+            "tenantId": tenant_id,
+            "modifiedFromUtc": current_modified_from
+        }
         
-            if isinstance(datos, dict) and 'items' in datos:
-                df = pd.DataFrame(datos['items'])
-            elif isinstance(datos, list):
-                df = pd.DataFrame(datos)
+        if profile_id:
+            params["profileId"] = profile_id
+        
+        try:
+            response = requests.get(f"{base_url}{endpoint}", params=params, headers=headers)
+            
+            if response.status_code == 200:
+                datos = response.json()
+                
+                # Determinar la estructura de los datos
+                if isinstance(datos, list):
+                    current_batch = datos
+                elif isinstance(datos, dict):
+                    # Buscar diferentes posibles keys
+                    if 'tests' in datos:
+                        current_batch = datos['tests']
+                    elif 'items' in datos:
+                        current_batch = datos['items']
+                    elif 'data' in datos:
+                        current_batch = datos['data']
+                    else:
+                        # Si es un dict sin keys conocidas, tratarlo como un solo elemento
+                        current_batch = [datos]
+                else:
+                    current_batch = [datos] if datos else []
+                
+                if not current_batch:
+                    print("✅ No hay más datos en esta respuesta")
+                    break
+                
+                print(f"📊 Obtenidos {len(current_batch)} registros en esta página")
+                
+                # Agregar datos a la lista principal
+                all_tests.extend(current_batch)
+                
+                # CLAVE: Buscar el campo de fecha de modificación para paginación
+                last_record = current_batch[-1]
+                next_modified_date = None
+                
+                # Buscar diferentes posibles nombres para el campo de fecha
+                possible_date_fields = ['modifiedDateUtc', 'modifiedDate', 'lastModified', 
+                                      'updatedAt', 'dateModified', 'modified']
+                
+                for field in possible_date_fields:
+                    if field in last_record:
+                        next_modified_date = last_record[field]
+                        print(f"🔄 Encontrado campo '{field}': {next_modified_date}")
+                        break
+                
+                if next_modified_date:
+                    # Verificar si la fecha es la misma que la anterior (bucle infinito)
+                    if next_modified_date == current_modified_from:
+                        print("⚠️ Detectado bucle infinito: misma fecha de modificación")
+                        print("🔄 Agregando 1 milisegundo para avanzar...")
+                        
+                        # Convertir a datetime, agregar 1 milisegundo, y volver a string
+                        from datetime import datetime, timedelta
+                        try:
+                            dt = datetime.fromisoformat(next_modified_date.replace('Z', '+00:00'))
+                            dt_next = dt + timedelta(milliseconds=1)
+                            current_modified_from = dt_next.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                            print(f"🔄 Nueva fecha: {current_modified_from}")
+                        except Exception as e:
+                            print(f"❌ Error al procesar fecha: {e}")
+                            break
+                    else:
+                        current_modified_from = next_modified_date
+                        print(f"🔄 Siguiente página desde: {current_modified_from}")
+                else:
+                    print("⚠️ No se encontró campo de fecha de modificación en el último registro")
+                    print(f"⚠️ Campos disponibles: {list(last_record.keys())}")
+                    break
+                
+                # Protección adicional contra bucles infinitos
+                if page_count > 1000:  # Máximo 1000 páginas
+                    print("⚠️ Alcanzado límite máximo de páginas (1000). Deteniendo...")
+                    break
+                
+            elif response.status_code == 204:
+                print("✅ Código 204 - No hay más registros para obtener")
+                break
+                
             else:
-                df = pd.DataFrame([datos])
-            
-            if 'tests' in df.columns and len(df) > 0 and isinstance(df['tests'].iloc[0], (list, dict)):
-                try:
-                    expanded_df = pd.json_normalize(df['tests'].iloc[0])
-                    
-                    date_columns = [col for col in expanded_df.columns 
-                                    if 'date' in col.lower() or 'time' in col.lower()]
-                    for col in date_columns:
-                        expanded_df[col] = pd.to_datetime(expanded_df[col], errors='ignore')
-                    
-                    df = expanded_df
-                    print("✅ Normalización aplicada a la columna 'tests'")
-                except Exception as e:
-                    print(f"⚠️ No se pudo normalizar la columna 'tests': {e}")
-            
-            # Añadir información del tenant
-            df['tenant_id'] = tenant_id
-            
-            # Si ya tenemos un DataFrame, concatenamos
-            if df_all_nordbord is not None and not df.empty:
-                df_all_nordbord = pd.concat([df_all_nordbord, df], ignore_index=True)
-            elif not df.empty:
-                df_all_nordbord = df
-            
-            return df_all_nordbord
-            
-        elif response.status_code == 204:
-            print("⚠️ No hay más registros para obtener.")
-            return df_all_nordbord if df_all_nordbord is not None else pd.DataFrame()
-        else:
-            print(f"❌ Error al obtener datos: {response.status_code}")
-            print(response.text)
-            return df_all_nordbord if df_all_nordbord is not None else pd.DataFrame()
-            
-    except Exception as e:
-        print(f"❌ Error al obtener datos NordBord: {str(e)}")
-        return df_all_nordbord if df_all_nordbord is not None else pd.DataFrame()
-
+                print(f"❌ Error {response.status_code}: {response.text}")
+                break
+                
+        except Exception as e:
+            print(f"❌ Error en la solicitud: {str(e)}")
+            break
+    
+    # Convertir a DataFrame
+    if all_tests:
+        df = pd.DataFrame(all_tests)
+        
+        # Convertir columnas de fecha (sin el warning)
+        date_columns = [col for col in df.columns 
+                       if 'date' in col.lower() or 'time' in col.lower()]
+        for col in date_columns:
+            try:
+                df[col] = pd.to_datetime(df[col])
+            except:
+                pass  # Si no se puede convertir, mantener el formato original
+        
+        # Añadir información del tenant
+        df['tenant_id'] = tenant_id
+        
+        print(f"🎉 Proceso completado: {len(df)} registros totales obtenidos en {page_count} páginas")
+        return df
+    else:
+        print("⚠️ No se obtuvieron datos")
+        return pd.DataFrame()
+        
 # Función para obtener datos de ForceFrame
-def get_ForceFrame(token, tenant_id, fecha_desde, df_all_forceframe=None):
-    base_url = "https://prd-aue-api-externalforceframe.valdperformance.com"
-    
+def get_ForceFrame_complete(token, tenant_id, fecha_desde, profile_id=None):
+    """
+    Obtiene TODOS los datos de ForceFrame usando paginación correcta
+    """
+    base_url = "https://prd-use-api-externalforceframe.valdperformance.com"
     endpoint = "/tests/v2"
-    params = {
-        "tenantId": tenant_id,
-        "modifiedFromUtc": fecha_desde
-    }
     
     headers = {
         "Authorization": f"Bearer {token}"
     }
     
-    try:
-        print(f"🔄 Solicitando datos ForceFrame para tenant {tenant_id}...")
-        response = requests.get(f"{base_url}{endpoint}", params=params, headers=headers)
+    all_tests = []
+    current_modified_from = fecha_desde
+    page_count = 0
+    
+    print(f"🔄 Iniciando obtención completa de datos ForceFrame para tenant {tenant_id}...")
+    
+    while True:
+        page_count += 1
+        print(f"📄 Procesando página {page_count} (desde: {current_modified_from})")
         
-        if response.status_code == 200:
-            print(f"✅ Datos obtenidos correctamente")
-            datos = response.json()
+        params = {
+            "tenantId": tenant_id,
+            "modifiedFromUtc": current_modified_from
+        }
         
-            if isinstance(datos, dict) and 'items' in datos:
-                df = pd.DataFrame(datos['items'])
-            elif isinstance(datos, list):
-                df = pd.DataFrame(datos)
+        if profile_id:
+            params["profileId"] = profile_id
+        
+        try:
+            response = requests.get(f"{base_url}{endpoint}", params=params, headers=headers)
+            
+            if response.status_code == 200:
+                datos = response.json()
+                
+                # Determinar la estructura de los datos
+                if isinstance(datos, list):
+                    current_batch = datos
+                elif isinstance(datos, dict):
+                    if 'tests' in datos:
+                        current_batch = datos['tests']
+                    elif 'items' in datos:
+                        current_batch = datos['items']
+                    elif 'data' in datos:
+                        current_batch = datos['data']
+                    else:
+                        current_batch = [datos]
+                else:
+                    current_batch = [datos] if datos else []
+                
+                if not current_batch:
+                    print("✅ No hay más datos en esta respuesta")
+                    break
+                
+                print(f"📊 Obtenidos {len(current_batch)} registros en esta página")
+                
+                # Agregar datos a la lista principal
+                all_tests.extend(current_batch)
+                
+                # Buscar el campo de fecha de modificación para paginación
+                last_record = current_batch[-1]
+                next_modified_date = None
+                
+                # Buscar diferentes posibles nombres para el campo de fecha
+                possible_date_fields = ['modifiedDateUtc', 'modifiedDate', 'lastModified', 
+                                      'updatedAt', 'dateModified', 'modified']
+                
+                for field in possible_date_fields:
+                    if field in last_record:
+                        next_modified_date = last_record[field]
+                        print(f"🔄 Encontrado campo '{field}': {next_modified_date}")
+                        break
+                
+                if next_modified_date:
+                    # Verificar si la fecha es la misma (bucle infinito)
+                    if next_modified_date == current_modified_from:
+                        print("⚠️ Detectado bucle infinito: misma fecha de modificación")
+                        print("🔄 Agregando 1 milisegundo para avanzar...")
+                        
+                        from datetime import datetime, timedelta
+                        try:
+                            dt = datetime.fromisoformat(next_modified_date.replace('Z', '+00:00'))
+                            dt_next = dt + timedelta(milliseconds=1)
+                            current_modified_from = dt_next.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                            print(f"🔄 Nueva fecha: {current_modified_from}")
+                        except Exception as e:
+                            print(f"❌ Error al procesar fecha: {e}")
+                            break
+                    else:
+                        current_modified_from = next_modified_date
+                        print(f"🔄 Siguiente página desde: {current_modified_from}")
+                else:
+                    print("⚠️ No se encontró campo de fecha de modificación")
+                    print(f"⚠️ Campos disponibles: {list(last_record.keys())}")
+                    break
+                
+                # Protección contra bucles infinitos
+                if page_count > 1000:
+                    print("⚠️ Alcanzado límite máximo de páginas (1000)")
+                    break
+                
+            elif response.status_code == 204:
+                print("✅ Código 204 - No hay más registros")
+                break
+                
             else:
-                df = pd.DataFrame([datos])
+                print(f"❌ Error {response.status_code}: {response.text}")
+                break
+                
+        except Exception as e:
+            print(f"❌ Error en la solicitud: {str(e)}")
+            break
+    
+    # Convertir a DataFrame
+    if all_tests:
+        df = pd.DataFrame(all_tests)
+        
+        # Convertir columnas de fecha
+        date_columns = [col for col in df.columns 
+                       if 'date' in col.lower() or 'time' in col.lower()]
+        for col in date_columns:
+            try:
+                df[col] = pd.to_datetime(df[col])
+            except:
+                pass
+        
+        df['tenant_id'] = tenant_id
+        
+        print(f"🎉 Proceso completado: {len(df)} registros totales en {page_count} páginas")
+        return df
+    else:
+        print("⚠️ No se obtuvieron datos")
+        return pd.DataFrame()
+
+def get_forcedecks_complete(token, tenant_id, fecha_desde, profile_id=None):
+    """
+    Obtiene TODOS los datos de NordBord usando la paginación correcta del endpoint /tests/v2
+    """
+    base_url = "https://prd-use-api-extforcedecks.valdperformance.com"
+    endpoint = "/tests"
+    
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+    
+    all_tests = []  # Cambiado para ser más específico
+    current_modified_from = fecha_desde
+    page_count = 0
+    
+    print(f"🔄 Iniciando obtención completa de datos ForceDecks para tenant {tenant_id}...")
+    
+    while True:
+        page_count += 1
+        print(f"📄 Procesando página {page_count} (desde: {current_modified_from})")
+        
+        params = {
+            "tenantId": tenant_id,
+            "modifiedFromUtc": current_modified_from
+        }
+        
+        if profile_id:
+            params["profileId"] = profile_id
+        
+        try:
+            response = requests.get(f"{base_url}{endpoint}", params=params, headers=headers)
             
-            if 'tests' in df.columns and len(df) > 0 and isinstance(df['tests'].iloc[0], (list, dict)):
-                try:
-                    expanded_df = pd.json_normalize(df['tests'].iloc[0])
-                    
-                    date_columns = [col for col in expanded_df.columns 
-                                    if 'date' in col.lower() or 'time' in col.lower()]
-                    for col in date_columns:
-                        expanded_df[col] = pd.to_datetime(expanded_df[col], errors='ignore')
-                    
-                    df = expanded_df
-                    print("✅ Normalización aplicada a la columna 'tests'")
-                except Exception as e:
-                    print(f"⚠️ No se pudo normalizar la columna 'tests': {e}")
-            
-            # Añadir información del tenant
-            df['tenant_id'] = tenant_id
-            
-            # Si ya tenemos un DataFrame, concatenamos
-            if df_all_forceframe is not None and not df.empty:
-                df_all_forceframe = pd.concat([df_all_forceframe, df], ignore_index=True)
-            elif not df.empty:
-                df_all_forceframe = df
-            
-            return df_all_forceframe
-            
-        elif response.status_code == 204:
-            print("⚠️ No hay más registros para obtener.")
-            return df_all_forceframe if df_all_forceframe is not None else pd.DataFrame()
-        else:
-            print(f"❌ Error al obtener datos: {response.status_code}")
-            print(response.text)
-            return df_all_forceframe if df_all_forceframe is not None else pd.DataFrame()
-            
-    except Exception as e:
-        print(f"❌ Error al obtener datos ForceFrame: {str(e)}")
-        return df_all_forceframe if df_all_forceframe is not None else pd.DataFrame()
+            if response.status_code == 200:
+                datos = response.json()
+                
+                # Determinar la estructura de los datos
+                if isinstance(datos, list):
+                    current_batch = datos
+                elif isinstance(datos, dict):
+                    # Buscar diferentes posibles keys
+                    if 'tests' in datos:
+                        current_batch = datos['tests']
+                    elif 'items' in datos:
+                        current_batch = datos['items']
+                    elif 'data' in datos:
+                        current_batch = datos['data']
+                    else:
+                        # Si es un dict sin keys conocidas, tratarlo como un solo elemento
+                        current_batch = [datos]
+                else:
+                    current_batch = [datos] if datos else []
+                
+                if not current_batch:
+                    print("✅ No hay más datos en esta respuesta")
+                    break
+                
+                print(f"📊 Obtenidos {len(current_batch)} registros en esta página")
+                
+                # Agregar datos a la lista principal
+                all_tests.extend(current_batch)
+                
+                # CLAVE: Buscar el campo de fecha de modificación para paginación
+                last_record = current_batch[-1]
+                next_modified_date = None
+                
+                # Buscar diferentes posibles nombres para el campo de fecha
+                possible_date_fields = ['modifiedDateUtc', 'modifiedDate', 'lastModified', 
+                                      'updatedAt', 'dateModified', 'modified']
+                
+                for field in possible_date_fields:
+                    if field in last_record:
+                        next_modified_date = last_record[field]
+                        print(f"🔄 Encontrado campo '{field}': {next_modified_date}")
+                        break
+                
+                if next_modified_date:
+                    # Verificar si la fecha es la misma que la anterior (bucle infinito)
+                    if next_modified_date == current_modified_from:
+                        print("⚠️ Detectado bucle infinito: misma fecha de modificación")
+                        print("🔄 Agregando 1 milisegundo para avanzar...")
+                        
+                        # Convertir a datetime, agregar 1 milisegundo, y volver a string
+                        from datetime import datetime, timedelta
+                        try:
+                            dt = datetime.fromisoformat(next_modified_date.replace('Z', '+00:00'))
+                            dt_next = dt + timedelta(milliseconds=1)
+                            current_modified_from = dt_next.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                            print(f"🔄 Nueva fecha: {current_modified_from}")
+                        except Exception as e:
+                            print(f"❌ Error al procesar fecha: {e}")
+                            break
+                    else:
+                        current_modified_from = next_modified_date
+                        print(f"🔄 Siguiente página desde: {current_modified_from}")
+                else:
+                    print("⚠️ No se encontró campo de fecha de modificación en el último registro")
+                    print(f"⚠️ Campos disponibles: {list(last_record.keys())}")
+                    break
+                
+                # Protección adicional contra bucles infinitos
+                if page_count > 1000:  # Máximo 1000 páginas
+                    print("⚠️ Alcanzado límite máximo de páginas (1000). Deteniendo...")
+                    break
+                
+            elif response.status_code == 204:
+                print("✅ Código 204 - No hay más registros para obtener")
+                break
+                
+            else:
+                print(f"❌ Error {response.status_code}: {response.text}")
+                break
+                
+        except Exception as e:
+            print(f"❌ Error en la solicitud: {str(e)}")
+            break
+    
+    # Convertir a DataFrame
+    if all_tests:
+        df = pd.DataFrame(all_tests)
+        
+        # Convertir columnas de fecha (sin el warning)
+        date_columns = [col for col in df.columns 
+                       if 'date' in col.lower() or 'time' in col.lower()]
+        for col in date_columns:
+            try:
+                df[col] = pd.to_datetime(df[col])
+            except:
+                pass  # Si no se puede convertir, mantener el formato original
+        
+        # Añadir información del tenant
+        df['tenant_id'] = tenant_id
+        
+        print(f"🎉 Proceso completado: {len(df)} registros totales obtenidos en {page_count} páginas")
+        return df
+    else:
+        print("⚠️ No se obtuvieron datos")
+        return pd.DataFrame()
+
+
+# ======== NUEVA FUNCIÓN CON LOGS EN TIEMPO REAL ========
+
+def run_extraction_with_realtime_logs(log_cb, progress_cb):
+    """Ejecuta la extracción usando callbacks para logs y progreso en vivo."""
+    total_steps = 8
+    step = 1
+
+    # 1. Autenticación
+    log_cb("🔐 Paso 1/8: Autenticando...")
+    progress_cb(step, total_steps, "Autenticación")
+    token = get_token()
+    step += 1
+
+    # 2. Obtener tenants
+    log_cb("🏢 Paso 2/8: Obteniendo tenants...")
+    progress_cb(step, total_steps, "Tenants")
+    df_tenants = get_tenants(token)
+    tenant_id = df_tenants.iloc[0]['id'] if not df_tenants.empty else None
+    step += 1
+
+    # 3. Configuración (categories, groups, profiles)
+    log_cb("⚙️ Paso 3/8: Procesando categorías, grupos y perfiles...")
+    progress_cb(step, total_steps, "Config")
+    df_categories = get_categories(tenant_id, token)
+    # Mantener solo la categoría CBMM
+    df_categories = df_categories[df_categories['name'].str.upper() == 'CBMM']
+    df_groups = get_groups(tenant_id, token)
+    df_profiles = pd.DataFrame()
+    if not df_categories.empty and not df_groups.empty:
+        # filtrar grupos dentro de las categorías CBMM si aplica
+        if not df_categories.empty:
+            df_groups = df_groups[df_groups['categoryId'].isin(df_categories['id'])]
+        total_grps = len(df_groups)
+        for idx, grp in df_groups.iterrows():
+            log_cb(f"   👥 Grupo {idx+1}/{total_grps}: {grp['name']}")
+            progress_cb(step, total_steps, f"Perfiles {idx+1}/{total_grps}")
+            df_profiles = get_profiles(
+                token,
+                tenant_id,
+                grp['id'],       # groupId
+                grp['name'],     # groupName
+                grp['categoryId'],
+                df_categories[df_categories['id']==grp['categoryId']]['name'].values[0] if not df_categories.empty else '',
+                df_profiles
+            )
+    step += 1
+
+    # 4. Extraer NordBord
+    log_cb("🦵 Paso 4/8: Extrayendo NordBord...")
+    progress_cb(step, total_steps, "NordBord")
+    FECHA_DESDE = "2020-01-01T00:00:00Z"
+    df_all_nordbord = get_nordbord_complete(token, tenant_id, FECHA_DESDE)
+    step += 1
+
+    # 5. Extraer ForceFrame
+    log_cb("🏋️ Paso 5/8: Extrayendo ForceFrame...")
+    progress_cb(step, total_steps, "ForceFrame")
+    df_all_forceframe = get_ForceFrame_complete(token, tenant_id, FECHA_DESDE)
+    step += 1
+
+    # 5. Extraer ForceDescks
+    log_cb("🏋️ Paso 6/8: Extrayendo ForceDecks...")
+    progress_cb(step, total_steps, "ForceDecks")
+    df_all_forcedecks = get_forcedecks_complete(token, tenant_id, FECHA_DESDE)
+    step += 1
+
+    # 6. Guardar CSV
+    log_cb("💾 Paso 7/8: Guardando CSV...")
+    progress_cb(step, total_steps, "Guardar CSV")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    if not df_profiles.empty:
+        df_profiles.to_csv(os.path.join(OUTPUT_DIR, "all_profiles.csv"), index=False)
+    if not df_all_nordbord.empty:
+        df_all_nordbord.to_csv(os.path.join(OUTPUT_DIR, "all_nordbord.csv"), index=False)
+    if not df_all_forceframe.empty:
+        df_all_forceframe.to_csv(os.path.join(OUTPUT_DIR, "all_forceframe.csv"), index=False)
+    if not df_all_forcedecks.empty:
+        df_all_forcedecks.to_csv(os.path.join(OUTPUT_DIR, "all_forcedecks.csv"), index=False)
+    step += 1
+
+    # 7. Guardar en Google Sheets
+    log_cb("📤 Paso 8/8: Guardando en Google Sheets...")
+    progress_cb(step, total_steps, "Google Sheets")
+    if not df_profiles.empty:
+        save_to_google_sheets(df_profiles, "Perfiles_VALD")
+    if not df_all_nordbord.empty:
+        save_to_google_sheets(df_all_nordbord, "NordBord_VALD")
+    if not df_all_forceframe.empty:
+        save_to_google_sheets(df_all_forceframe, "ForceFrame_VALD")
+    if not df_all_forcedecks.empty:
+        save_to_google_sheets(df_all_forcedecks, "ForceDecks_VALD")
+
+    log_cb("✅ Extracción completada")
+    progress_cb(total_steps, total_steps, "Completado")
 
 # Función principal para ejecutar todo el proceso
 def run_extraction():
@@ -468,11 +848,13 @@ def run_extraction():
         
         # Obtener categorías
         df_categories = get_categories(tenant_id, token)
-        df_categories = df_categories[df_categories['name'] == 'CBMM']
+        # Mantener solo la categoría CBMM
+        df_categories = df_categories[df_categories['name'].str.upper() == 'CBMM']
 
         # Obtener grupos
         df_groups = get_groups(tenant_id, token)
-        df_groups = df_groups[df_groups['categoryId'] == '0e7bfdff-aabb-4efa-ad13-ecb419e0beef']
+        if not df_categories.empty:
+            df_groups = df_groups[df_groups['categoryId'].isin(df_categories['id'])]
 
         # Si hay categorías y grupos, combinarlos
         if not df_categories.empty and not df_groups.empty:
@@ -509,12 +891,45 @@ def run_extraction():
         
         # Obtener datos de NordBord
         print("\n📊 Obteniendo datos de NordBord...")
-        df_all_nordbord = get_nordbord(token, tenant_id, FECHA_DESDE, df_all_nordbord)
-        
+        #df_all_nordbord = get_nordbord(token, tenant_id, FECHA_DESDE, df_all_nordbord)
+        df_all_nordbord = get_nordbord_complete(token, tenant_id, FECHA_DESDE)
+        print("\n📊 Fin de Obtener datos de NordBord...")
+        if not df_all_nordbord.empty:
+            
+            # Guardar en CSV local
+            csv_path = os.path.join(OUTPUT_DIR, "all_nordbord.csv")
+            df_all_nordbord.to_csv(csv_path, index=False)
+            print(f"✅ Total de {len(df_all_nordbord)} datos NordBord guardados en {csv_path} llll")
+            
+            # Guardar en Google Sheets
+            save_to_google_sheets(df_all_nordbord, "NordBord_VALD")
+
         # Obtener datos de ForceFrame
         print("\n📊 Obteniendo datos de ForceFrame...")
-        df_all_forceframe = get_ForceFrame(token, tenant_id, FECHA_DESDE, df_all_forceframe)
-    
+        df_all_forceframe = get_ForceFrame_complete(token, tenant_id, FECHA_DESDE)
+        print("\n📊 Fin de Obtener datos de ForceFrame...")
+        if not df_all_forceframe.empty:
+            # Guardar en CSV local
+            csv_path = os.path.join(OUTPUT_DIR, "all_forceframe.csv")
+            df_all_forceframe.to_csv(csv_path, index=False)
+            print(f"✅ Total de {len(df_all_forceframe)} datos ForceFrame guardados en {csv_path}")
+            
+            # Guardar en Google Sheets
+            save_to_google_sheets(df_all_forceframe, "ForceFrame_VALD")
+
+        # Obtener datos de ForceDecks
+        print("\n📊 Obteniendo datos de ForceDecks...")
+        df_all_forcedecks = get_forcedecks_complete(token, tenant_id, FECHA_DESDE)
+        print("\n📊 Fin de Obtener datos de ForceDecks...")
+        if not df_all_forcedecks.empty:
+            # Guardar en CSV local
+            csv_path = os.path.join(OUTPUT_DIR, "all_forcedecks.csv")
+            df_all_forcedecks.to_csv(csv_path, index=False)
+            print(f"✅ Total de {len(df_all_forcedecks)} datos ForceDecks guardados en {csv_path}")
+            
+            # Guardar en Google Sheets
+            save_to_google_sheets(df_all_forcedecks, "ForceDecks_VALD")
+
     # Guardar todos los DataFrames consolidados
     if not df_all_profiles.empty:
         # Guardar en CSV local
@@ -524,24 +939,8 @@ def run_extraction():
         
         # Guardar en Google Sheets
         save_to_google_sheets(df_all_profiles, "Perfiles_VALD")
-        
-    if not df_all_nordbord.empty:
-        # Guardar en CSV local
-        csv_path = os.path.join(OUTPUT_DIR, "all_nordbord.csv")
-        df_all_nordbord.to_csv(csv_path, index=False)
-        print(f"✅ Total de {len(df_all_nordbord)} datos NordBord guardados en {csv_path}")
-        
-        # Guardar en Google Sheets
-        save_to_google_sheets(df_all_nordbord, "NordBord_VALD")
-        
-    if not df_all_forceframe.empty:
-        # Guardar en CSV local
-        csv_path = os.path.join(OUTPUT_DIR, "all_forceframe.csv")
-        df_all_forceframe.to_csv(csv_path, index=False)
-        print(f"✅ Total de {len(df_all_forceframe)} datos ForceFrame guardados en {csv_path}")
-        
-        # Guardar en Google Sheets
-        save_to_google_sheets(df_all_forceframe, "ForceFrame_VALD")
+    
+    
     
     # También guardar los tenants en Google Sheets
     if not df_tenants.empty:
